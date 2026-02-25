@@ -2,13 +2,7 @@
 /**
  * useLoadTest.ts
  * Manages synthetic load tests against the search endpoint.
- *
- * Design:
- *  - A tick-based scheduler fires requests at `requestsPerSecond`
- *  - An inflight counter limits simultaneous requests to `concurrency`
- *  - Each request is timed with performance.now() and recorded as a Sample
- *  - After the run, first-half vs second-half latency is compared to
- *    determine whether degradation is linear or exponential
+ * Now uses the dynamic SearchConfig/URL from useMonitor context.
  */
 import { useState, useRef, useCallback } from "react";
 import {
@@ -18,36 +12,34 @@ import {
   computeMetrics,
   classifyHealth,
 } from "@/lib/metrics";
-import { ENDPOINT } from "@/hooks/useMonitor";
+import { SearchConfig, buildSearchUrl } from "@/lib/api";
 
 export interface LoadTestConfig {
-  /** Target dispatch rate (1–50 req/sec) */
   requestsPerSecond: number;
-  /** Max simultaneous inflight requests (1–20) */
-  concurrency: number;
-  /** Test duration in seconds (5–120) */
-  durationSec: number;
+  concurrency:       number;
+  durationSec:       number;
 }
 
 export interface LoadTestResult {
   config:          LoadTestConfig;
+  searchConfig:    SearchConfig;
+  endpointUrl:     string;
   samples:         Sample[];
   metrics:         MetricsSnapshot;
   health:          HealthState;
   totalDurationMs: number;
-  /** Human-readable scaling analysis from first-half vs second-half comparison */
   scalingAnalysis: string;
 }
 
 export interface LoadTestState {
-  isRunning:         boolean;
-  progress:          number; // 0–100
-  liveRps:           number;
-  liveInflight:      number;
-  result:            LoadTestResult | null;
-  error:             string | null;
-  start:             (config: LoadTestConfig) => Promise<void>;
-  stop:              () => void;
+  isRunning:    boolean;
+  progress:     number;
+  liveRps:      number;
+  liveInflight: number;
+  result:       LoadTestResult | null;
+  error:        string | null;
+  start:        (loadConfig: LoadTestConfig, searchConfig: SearchConfig) => Promise<void>;
+  stop:         () => void;
 }
 
 export function useLoadTest(): LoadTestState {
@@ -58,36 +50,33 @@ export function useLoadTest(): LoadTestState {
   const [result,       setResult]       = useState<LoadTestResult | null>(null);
   const [error,        setError]        = useState<string | null>(null);
 
-  const abortRef   = useRef(false);
+  const abortRef    = useRef(false);
   const inflightRef = useRef(0);
 
   const stop = useCallback(() => { abortRef.current = true; }, []);
 
-  const start = useCallback(async (config: LoadTestConfig) => {
-    abortRef.current   = false;
+  const start = useCallback(async (loadConfig: LoadTestConfig, searchConfig: SearchConfig) => {
+    abortRef.current    = false;
     inflightRef.current = 0;
     setIsRunning(true);
     setProgress(0);
     setResult(null);
     setError(null);
 
-    const samples:    Sample[]  = [];
-    const startMs               = Date.now();
-    const endMs                 = startMs + config.durationSec * 1_000;
-    const intervalMs            = 1_000 / config.requestsPerSecond;
-    // Sliding 1-second window to compute live RPS
-    const rpsWindow: number[]   = [];
+    const url            = buildSearchUrl(searchConfig);
+    const samples: Sample[] = [];
+    const startMs        = Date.now();
+    const endMs          = startMs + loadConfig.durationSec * 1_000;
+    const intervalMs     = 1_000 / loadConfig.requestsPerSecond;
+    const rpsWindow: number[] = [];
 
-    /** Fire a single request without awaiting — intentionally concurrent */
     const fireOne = () => {
       if (abortRef.current) return;
       inflightRef.current++;
       setLiveInflight(inflightRef.current);
-
       const t0        = performance.now();
       const timestamp = Date.now();
-
-      fetch(ENDPOINT, { cache: "no-store" })
+      fetch(url, { cache: "no-store" })
         .then((res) => {
           samples.push({ timestamp, duration: performance.now() - t0, success: res.ok, statusCode: res.status });
         })
@@ -97,7 +86,6 @@ export function useLoadTest(): LoadTestState {
         .finally(() => {
           inflightRef.current--;
           setLiveInflight(inflightRef.current);
-          // Live RPS
           rpsWindow.push(Date.now());
           const cut = Date.now() - 1_000;
           while (rpsWindow.length && rpsWindow[0] < cut) rpsWindow.shift();
@@ -107,15 +95,11 @@ export function useLoadTest(): LoadTestState {
 
     try {
       while (Date.now() < endMs && !abortRef.current) {
-        const elapsed = Date.now() - startMs;
-        setProgress(Math.min(99, (elapsed / (config.durationSec * 1_000)) * 100));
-
-        if (inflightRef.current < config.concurrency) fireOne();
-
+        setProgress(Math.min(99, ((Date.now() - startMs) / (loadConfig.durationSec * 1_000)) * 100));
+        if (inflightRef.current < loadConfig.concurrency) fireOne();
         await new Promise((r) => setTimeout(r, intervalMs));
       }
 
-      // Drain inflight — wait up to 15 s
       const drainEnd = Date.now() + 15_000;
       while (inflightRef.current > 0 && Date.now() < drainEnd) {
         await new Promise((r) => setTimeout(r, 150));
@@ -126,8 +110,6 @@ export function useLoadTest(): LoadTestState {
       const metrics         = computeMetrics(samples, totalDurationMs);
       const health          = classifyHealth(metrics);
 
-      // ── Scaling analysis ─────────────────────────────────────────────────
-      // Split samples chronologically and compare first vs second half latency
       const half  = Math.floor(samples.length / 2);
       const m1    = computeMetrics(samples.slice(0, half), totalDurationMs / 2);
       const m2    = computeMetrics(samples.slice(half),    totalDurationMs / 2);
@@ -144,7 +126,7 @@ export function useLoadTest(): LoadTestState {
         scalingAnalysis = `Exponential degradation detected! First-half avg: ${m1.avg.toFixed(0)}ms → Second-half avg: ${m2.avg.toFixed(0)}ms (ratio ${ratio.toFixed(2)}×). Requests are queuing — reduce RPS or concurrency.`;
       }
 
-      setResult({ config, samples, metrics, health, totalDurationMs, scalingAnalysis });
+      setResult({ config: loadConfig, searchConfig, endpointUrl: url, samples, metrics, health, totalDurationMs, scalingAnalysis });
     } catch (e) {
       setError(String(e));
     } finally {

@@ -1,6 +1,7 @@
 "use client";
 import { motion, AnimatePresence } from "framer-motion";
 import { HealthState } from "@/lib/metrics";
+import { Tooltip } from "@/components/dashboard/Tooltip";
 
 interface HealthBadgeProps {
   health:    HealthState;
@@ -41,6 +42,12 @@ const STYLES: Record<
   },
 };
 
+const TOOLTIP: Record<HealthState, string> = {
+  healthy:   "HEALTHY: P95 latency is below 300ms and the error rate is below 1%. The endpoint is responding quickly and reliably.",
+  degrading: "DEGRADING: P95 latency is between 300ms and 800ms, or the error rate is between 1% and 5%. Performance is acceptable but declining — monitor closely.",
+  critical:  "CRITICAL: P95 latency exceeds 800ms or the error rate exceeds 5%. The endpoint is under severe stress and users are likely experiencing failures or timeouts.",
+};
+
 export function HealthBadge({ health, p95, errorRate }: HealthBadgeProps) {
   const s = STYLES[health];
   return (
@@ -51,21 +58,22 @@ export function HealthBadge({ health, p95, errorRate }: HealthBadgeProps) {
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.94 }}
         transition={{ duration: 0.25 }}
-        className={`flex items-center gap-4 rounded-xl border px-5 py-4 ${s.card}`}
       >
-        {/* Pulse dot */}
-        <span className="relative flex h-4 w-4 shrink-0">
-          <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-60 ${s.ring}`} />
-          <span className={`relative inline-flex h-4 w-4 rounded-full ${s.dot}`} />
-        </span>
-
-        <div>
-          <p className={`font-mono text-sm font-bold tracking-widest ${s.text}`}>{s.label}</p>
-          <p className="mt-0.5 text-xs text-slate-400">{s.desc}</p>
-          <p className={`mt-1 font-mono text-xs ${s.meta}`}>
-            P95: {p95.toFixed(0)} ms &middot; Errors: {errorRate.toFixed(1)}%
-          </p>
-        </div>
+        <Tooltip content={TOOLTIP[health]} position="bottom">
+          <div className={`flex cursor-help items-center gap-4 rounded-xl border px-5 py-4 ${s.card}`}>
+            <span className="relative flex h-4 w-4 shrink-0">
+              <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-60 ${s.ring}`} />
+              <span className={`relative inline-flex h-4 w-4 rounded-full ${s.dot}`} />
+            </span>
+            <div>
+              <p className={`font-mono text-sm font-bold tracking-widest ${s.text}`}>{s.label}</p>
+              <p className="mt-0.5 text-xs text-slate-400">{s.desc}</p>
+              <p className={`mt-1 font-mono text-xs ${s.meta}`}>
+                P95: {p95.toFixed(0)} ms &middot; Errors: {errorRate.toFixed(1)}%
+              </p>
+            </div>
+          </div>
+        </Tooltip>
       </motion.div>
     </AnimatePresence>
   );

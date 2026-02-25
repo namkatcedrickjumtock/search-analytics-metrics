@@ -1,5 +1,7 @@
 "use client";
+import { ReactNode } from "react";
 import { motion } from "framer-motion";
+import { InfoTooltip } from "@/components/dashboard/Tooltip";
 
 interface StatCardProps {
   label:       string;
@@ -8,6 +10,7 @@ interface StatCardProps {
   sub?:        string;
   valueClass?: string;
   index?:      number;
+  tooltip?:    ReactNode;
 }
 
 export function StatCard({
@@ -17,17 +20,21 @@ export function StatCard({
   sub,
   valueClass = "text-violet-400",
   index = 0,
+  tooltip,
 }: StatCardProps) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.04, duration: 0.3 }}
-      className="flex min-w-[110px] flex-1 flex-col rounded-xl border border-slate-700/50 bg-slate-800/50 px-4 py-4"
+      className="flex min-w-[120px] flex-1 flex-col rounded-xl border border-slate-700/50 bg-slate-800/50 px-4 py-4"
     >
-      <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-slate-500">
-        {label}
-      </p>
+      <div className="mb-2 flex items-center">
+        <p className="font-mono text-[10px] uppercase tracking-widest text-slate-500">
+          {label}
+        </p>
+        {tooltip && <InfoTooltip content={tooltip} />}
+      </div>
       <div className="flex items-baseline gap-1">
         <motion.span
           key={String(value)}
